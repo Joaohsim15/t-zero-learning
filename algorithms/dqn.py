@@ -123,7 +123,16 @@ class ReplayBuffer:
 
         """
         # ==================== YOUR CODE HERE (Part 1a) ====================
-        raise NotImplementedError("Implement ReplayBuffer.add")
+        self.observations[self.pos] = obs
+        self.next_observations[self.pos] = next_obs
+        self.actions[self.pos] = action
+        self.rewards[self.pos] = reward
+        self.dones[self.pos] = done
+
+        # Circular write head: once the buffer is full the next add overwrites
+        # the oldest slot, and ``size`` saturates at ``capacity``.
+        self.pos = (self.pos + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
         # ==================================================================
 
     def sample(self, batch_size: int) -> Batch:
@@ -135,7 +144,20 @@ class ReplayBuffer:
 
         """
         # ==================== YOUR CODE HERE (Part 1b) ====================
-        raise NotImplementedError("Implement ReplayBuffer.sample")
+        # Draw only from the filled region — ``size``, never ``capacity`` — so
+        # empty slots can never enter a minibatch. Uniform with replacement.
+        idx = np.random.randint(0, self.size, size=batch_size)
+
+        def to_tensor(array, dtype):
+            return torch.as_tensor(array[idx], dtype=dtype, device=self.device)
+
+        return Batch(
+            observations=to_tensor(self.observations, torch.float32),
+            actions=to_tensor(self.actions, torch.int64),
+            next_observations=to_tensor(self.next_observations, torch.float32),
+            rewards=to_tensor(self.rewards, torch.float32),
+            dones=to_tensor(self.dones, torch.float32),
+        )
         # ==================================================================
 
 
@@ -144,7 +166,18 @@ def compute_td_targets(target_network, batch: Batch, gamma: float) -> torch.Tens
 
     """
     # ===================== YOUR CODE HERE (Part 2) =====================
-    raise NotImplementedError("Implement compute_td_targets")
+    # Bootstrap on the greedy action under the *target* network: the frozen
+    # copy is what stops the regression target from moving with every update.
+    target_max, _ = target_network(batch.next_observations).max(dim=1)
+
+    # Flatten (B, 1) -> (B,): leaving the trailing axis on would broadcast
+    # rewards/dones against target_max into a (B, B) matrix.
+    rewards = batch.rewards.flatten()
+    dones = batch.dones.flatten()
+
+    # (1 - done) cuts the bootstrap at true terminations only. The rollout
+    # stores truncations with done=0, so time-limit cutoffs still bootstrap.
+    return rewards + gamma * target_max * (1.0 - dones)
     # ===================================================================
 
 
